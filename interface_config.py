@@ -6,8 +6,8 @@ from wireless.models import WirelessLink
 
 class InterfaceDataScript(Script):
     class Meta:
-        name = "Interface Data"
-        description = "Test"
+        name = "Device Interface Configuration"
+        description = "Generates a `/etc/hostname.$INT` configuration for the interface for OpenBSD."
         commit_default = False
 
     device = ObjectVar(
