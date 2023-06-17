@@ -90,7 +90,7 @@ class InterfaceDataScript(Script):
         interface = data['interface']
         self.log_debug(f"device data: {vars(device)}")
         self.log_debug(f"interface data: {vars(interface)}")
-        file = f"/etc/hostname/{interface}"
+        file = f"/etc/hostname.{interface}"
         if interface.label:
             file = f"/etc/hostname.{interface.label}"
         config = {1: f"# {file}"}
