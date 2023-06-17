@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from dcim.models import CableTermination, Device, Interface
 from extras.scripts import Script, ObjectVar
 from ipam.models import IPAddress, VLAN
@@ -19,6 +21,11 @@ class InterfaceDataScript(Script):
             'device_id': '$device'
         }
     )
+
+    def get_host_url(self):
+        url = self.request.META.get('HTTP_REFERER')
+        parsed_url = urlparse(url)
+        return f"{parsed_url.scheme}://{parsed_url.netloc}"
 
     def get_interface_status(self, status: bool):
         enabled = ""
@@ -83,7 +90,7 @@ class InterfaceDataScript(Script):
         interface = data['interface']
         self.log_debug(f"device data: {vars(device)}")
         self.log_debug(f"interface data: {vars(interface)}")
-        file = f"/etc/hostname.{interface}"
+        file = f"/etc/hostname/{interface}"
         if interface.label:
             file = f"/etc/hostname.{interface.label}"
         config = {1: f"# {file}"}
@@ -119,17 +126,26 @@ class InterfaceDataScript(Script):
             )
         if "ieee802.11" in type:
             pass
-        elif "virtual" in type and "access" in interface.mode:
-            vlan_data = self.get_vlan_data(interface.untagged_vlan_id, interface.parent_id)
-            config.update(
-                {
-                    200: f"vlan {vlan_data[0]}",
-                    210: f"vlandev {vlan_data[1]}",
-                    800: f"description \"{vlan_data[-1]}\""
-                }
-            )
+        elif "virtual" in type:
+            if "access" in interface.mode:
+                vlan_data = self.get_vlan_data(interface.untagged_vlan_id, interface.parent_id)
+                config.update(
+                    {
+                        200: f"vlan {vlan_data[0]}",
+                        210: f"vlandev {vlan_data[1]}",
+                        800: f"description \"{vlan_data[-1]}\""
+                    }
+                )
+
+            if "wg" in interface.name:
+                config.update({850: "!/usr/local/bin/wg setconf \$if /etc/wireguard/\$if.conf"})
+
+        # PERSISTENT CHANGES
+        # TODO: find way to get job ID and update field below with report link
+        #interface.custom_field_data['last_config_render'] = f"{self.get_host_url}/extras/scripts/results/"
+        #interface.save()
 
         return '\n'.join([value for _, value in sorted(config.items())])
 
 
-script = InterfaceDataScript
+script = InterfaceDataScript()
