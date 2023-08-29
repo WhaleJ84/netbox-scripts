@@ -1,6 +1,6 @@
 from urllib.parse import urlparse
 
-from dcim.models import CableTermination, Device, Interface
+from dcim.models import CableTermination, Device, Interface, Platform
 from extras.scripts import Job, Script, ObjectVar
 from ipam.models import IPAddress, VLAN
 from wireless.models import WirelessLink
@@ -12,8 +12,16 @@ class InterfaceDataScript(Script):
         description = "Generates a `/etc/hostname.$INT` configuration for the interface for OpenBSD."
         commit_default = True
 
+    platform = ObjectVar(
+        Platform,
+        required=False
+    )
     device = ObjectVar(
-        Device
+        Device,
+        query_params={
+            'platform_id': '$platform'
+        },
+        required=False
     )
     interface = ObjectVar(
         Interface,
