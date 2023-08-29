@@ -1,7 +1,7 @@
 from urllib.parse import urlparse
 
 from dcim.models import CableTermination, Device, Interface
-from extras.scripts import Script, ObjectVar
+from extras.scripts import Job, Script, ObjectVar
 from ipam.models import IPAddress, VLAN
 from wireless.models import WirelessLink
 
@@ -10,7 +10,7 @@ class InterfaceDataScript(Script):
     class Meta:
         name = "Device Interface Configuration"
         description = "Generates a `/etc/hostname.$INT` configuration for the interface for OpenBSD."
-        commit_default = False
+        commit_default = True
 
     device = ObjectVar(
         Device
@@ -21,11 +21,6 @@ class InterfaceDataScript(Script):
             'device_id': '$device'
         }
     )
-
-    def get_host_url(self):
-        url = self.request.META.get('HTTP_REFERER')
-        parsed_url = urlparse(url)
-        return f"{parsed_url.scheme}://{parsed_url.netloc}"
 
     def get_interface_status(self, status: bool):
         enabled = ""
@@ -71,9 +66,11 @@ class InterfaceDataScript(Script):
             device = Device.objects.get(id=termination._interface_a_device_id)
             interface = Interface.objects.get(id=termination.interface_a_id)
 
+        mode = str(interface.type).split('.')[-1]
         if interface.label:
             interface = interface.label
         return {
+            "media": f"media autoselect mode {mode}",
             "wireless": f"nwid \"{termination.ssid}\" wpakey \"{termination.auth_psk}\"",
             "description": f"{device} | {interface}"
         }
@@ -120,6 +117,7 @@ class InterfaceDataScript(Script):
             )
             config.update(
                 {
+                    450: data['media'],
                     500: data['wireless'],
                     800: f"description \"{data['description']}\""
                 }
@@ -141,9 +139,9 @@ class InterfaceDataScript(Script):
                 config.update({850: "!/usr/local/bin/wg setconf \$if /etc/wireguard/\$if.conf"})
 
         # PERSISTENT CHANGES
-        # TODO: find way to get job ID and update field below with report link
-        #interface.custom_field_data['last_config_render'] = f"{self.get_host_url}/extras/scripts/results/"
-        #interface.save()
+        job_id = Job.objects.order_by('-created').first().id
+        interface.custom_field_data['last_config_render'] = f"https://{urlparse(self.request.META.get('HTTP_REFERER')).hostname}/extras/scripts/results/{job_id}"
+        interface.save()
 
         return '\n'.join([value for _, value in sorted(config.items())])
 
