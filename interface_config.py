@@ -92,10 +92,10 @@ class InterfaceDataScript(Script):
             file = f"/etc/hostname.{interface.label}"
         config = {1: f"# {file}"}
         addresses = self.get_interface_addresses(interface.id)
-        position = 10
+        position = 600
         for address in addresses:
             config.update({position: address})
-            position += 10
+            position += 5
         enabled = self.get_interface_status(interface.enabled)
         config.update({999: enabled})
 
