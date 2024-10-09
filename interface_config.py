@@ -152,6 +152,3 @@ class InterfaceDataScript(Script):
         interface.save()
 
         return '\n'.join([value for _, value in sorted(config.items())])
-
-
-script = InterfaceDataScript()
