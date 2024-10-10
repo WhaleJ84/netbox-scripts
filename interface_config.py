@@ -1,44 +1,44 @@
-from urllib.parse import urlparse
+from importlib import import_module
+from os import getenv
 
+from core.models import Job
 from dcim.models import CableTermination, Device, Interface, Platform
-from extras.scripts import Job, Script, ObjectVar
+from extras.scripts import Script, ObjectVar
 from ipam.models import IPAddress, VLAN
 from wireless.models import WirelessLink
 
 
-class InterfaceDataScript(Script):
+class OpenBSDConfiguration(Script):
     class Meta:
-        name = "Device Interface Configuration"
+        name = "OpenBSD Configuration"
         description = "Generates a `/etc/hostname.$INT` configuration for the interface for OpenBSD."
-        commit_default = True
+        commit_default = False
 
     platform = ObjectVar(
-        Platform,
+        model=Platform,
         required=False
     )
+
     device = ObjectVar(
-        Device,
+        model=Device,
         query_params={
             'platform_id': '$platform'
         },
         required=False
     )
+
     interface = ObjectVar(
-        Interface,
+        model=Interface,
         query_params={
             'device_id': '$device'
-        }
+        },
+        required=True
     )
 
-    def get_interface_status(self, status: bool):
-        enabled = ""
-        if status:
-            enabled = "up"
-        return enabled
-
     def get_interface_addresses(self, interface_id: int):
-        addresses = []
         result = list(IPAddress.objects.filter(assigned_object_id=interface_id))
+        self.log_debug(f"Found addresses: {result}")
+        addresses = []
         for address in result:
             self.log_debug(f"address data:  {vars(address)}")
             if address.status == "dhcp":
@@ -49,9 +49,23 @@ class InterfaceDataScript(Script):
                 addresses.append(f"inet6 {address}")
         return addresses
 
+    def get_interface_status(self, status: bool):
+        enabled = ""
+        if status:
+            enabled = "up"
+        self.log_debug(f"Found status: {status}")
+        return enabled
+
     def get_parent_interface(self, parent_id: int):
         parent_interface = Interface.objects.get(id=parent_id)
         return parent_interface
+    
+    def get_vlan_data(self, vlan_id: int, parent_id: int):
+        vlan = VLAN.objects.get(id=vlan_id)
+        vlandev = self.get_parent_interface(parent_id).label
+        vid = vlan.vid
+        description = vlan.name
+        return [vid, vlandev, description]
 
     def get_cable_terminations(self, cable_id: int, cable_end: str):
         terminations = CableTermination.objects.filter(cable_id=cable_id)
@@ -83,31 +97,48 @@ class InterfaceDataScript(Script):
             "description": f"{device} | {interface}"
         }
 
-    def get_vlan_data(self, vlan_id: int, parent_id: int):
-        vlan = VLAN.objects.get(id=vlan_id)
-        vlandev = self.get_parent_interface(parent_id).label
-        vid = vlan.vid
-        description = vlan.name
-        return [vid, vlandev, description]
-
     def run(self, data, commit):
+        config = import_module(getenv('NETBOX_CONFIGURATION', 'netbox.configuration'))
+        primary_fqdn = getattr(config, 'ALLOWED_HOSTS')[0]
         device = data['device']
         interface = data['interface']
-        self.log_debug(f"device data: {vars(device)}")
-        self.log_debug(f"interface data: {vars(interface)}")
+        
         file = f"/etc/hostname.{interface}"
+
         if interface.label:
+            self.log_debug(f"Found label: {interface.label} for interface: {interface}")
             file = f"/etc/hostname.{interface.label}"
+        else:
+            self.log_failure(f"No label found for interface: {interface}")
         config = {1: f"# {file}"}
+
         addresses = self.get_interface_addresses(interface.id)
         position = 600
         for address in addresses:
             config.update({position: address})
             position += 5
+
         enabled = self.get_interface_status(interface.enabled)
         config.update({999: enabled})
 
         type = interface.type
+        self.log_debug(f"Found interface type: {type}")
+        if "ieee802.11" in type:
+            pass
+        elif "virtual" in type:
+            if "access" in interface.mode:
+                vlan_data = self.get_vlan_data(interface.untagged_vlan_id, interface.parent_id)
+                config.update(
+                    {
+                        200: f"vlan {vlan_data[0]}",
+                        210: f"vlandev {vlan_data[1]}",
+                        800: f"description \"{vlan_data[-1]}\""
+                    }
+                )
+
+            if "wg" in interface.name:
+                config.update({850: "!/usr/local/bin/wg setconf \$if /etc/wireguard/\$if.conf"})
+
         if interface.cable_id:
             description = self.get_cable_terminations(
                 interface.cable_id,
@@ -130,25 +161,9 @@ class InterfaceDataScript(Script):
                     800: f"description \"{data['description']}\""
                 }
             )
-        if "ieee802.11" in type:
-            pass
-        elif "virtual" in type:
-            if "access" in interface.mode:
-                vlan_data = self.get_vlan_data(interface.untagged_vlan_id, interface.parent_id)
-                config.update(
-                    {
-                        200: f"vlan {vlan_data[0]}",
-                        210: f"vlandev {vlan_data[1]}",
-                        800: f"description \"{vlan_data[-1]}\""
-                    }
-                )
 
-            if "wg" in interface.name:
-                config.update({850: "!/usr/local/bin/wg setconf \$if /etc/wireguard/\$if.conf"})
-
-        # PERSISTENT CHANGES
         job_id = Job.objects.order_by('-created').first().id
-        interface.custom_field_data['last_config_render'] = f"https://{urlparse(self.request.META.get('HTTP_REFERER')).hostname}/extras/scripts/results/{job_id}"
+        interface.custom_field_data['last_config_render'] = f"https://{primary_fqdn}/extras/scripts/results/{job_id}"
         interface.save()
 
         return '\n'.join([value for _, value in sorted(config.items())])
